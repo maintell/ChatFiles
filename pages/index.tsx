@@ -1,29 +1,10 @@
 import {Chat} from '@/components/Chat/Chat';
 import {Navbar} from '@/components/Mobile/Navbar';
 import {Sidebar} from '@/components/Sidebar/Sidebar';
-import {
-    ChatBody,
-    ChatFolder,
-    Conversation,
-    ErrorMessage,
-    KeyConfiguration,
-    KeyValuePair,
-    Message,
-    ModelType,
-    OpenAIModel,
-    OpenAIModelID,
-    OpenAIModels,
-} from '@/types';
-import {
-    cleanConversationHistory,
-    cleanSelectedConversation,
-} from '@/utils/app/clean';
+import {ChatFolder, Conversation, KeyConfiguration, KeyValuePair, Message, ModelType,} from '@/types';
+import {cleanConversationHistory, cleanSelectedConversation,} from '@/utils/app/clean';
 import {DEFAULT_SYSTEM_PROMPT} from '@/utils/app/const';
-import {
-    saveConversation,
-    saveConversations,
-    updateConversation,
-} from '@/utils/app/conversation';
+import {saveConversation, saveConversations, updateConversation,} from '@/utils/app/conversation';
 import {saveFolders} from '@/utils/app/folders';
 import {exportData, importData} from '@/utils/app/importExport';
 import {IconArrowBarRight} from '@tabler/icons-react';
@@ -32,6 +13,7 @@ import {useTranslation} from 'next-i18next';
 import {serverSideTranslations} from 'next-i18next/serverSideTranslations';
 import Head from 'next/head';
 import {useEffect, useRef, useState} from 'react';
+import {KeySettingsAlertDialog} from "@/components/Sidebar/KeySettingsAlert";
 
 interface HomeProps {
     serverSideApiKeyIsSet: boolean;
@@ -44,16 +26,16 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
     const [selectedConversation, setSelectedConversation] =
         useState<Conversation>();
     const [loading, setLoading] = useState<boolean>(false);
-    const [models, setModels] = useState<OpenAIModel[]>([]);
     const [lightMode, setLightMode] = useState<'dark' | 'light'>('dark');
     const [messageIsStreaming, setMessageIsStreaming] = useState<boolean>(false);
     const [showSidebar, setShowSidebar] = useState<boolean>(true);
     const [messageError, setMessageError] = useState<boolean>(false);
-    const [modelError, setModelError] = useState<ErrorMessage | null>(null);
     const [currentMessage, setCurrentMessage] = useState<Message>();
-    const [keyConfiguration, setkeyConfiguration] = useState<KeyConfiguration>({
+    const [showKeyConfigurationAlert, setShowKeyConfigurationAlert] = useState(false);
+    const [keyConfiguration, setKeyConfiguration] = useState<KeyConfiguration>({
         apiType: ModelType.OPENAI,
         apiKey: '',
+        apiModel: 'gpt-3.5-turbo',
         azureApiKey: '',
         azureInstanceName: '',
         azureApiVersion: '',
@@ -63,13 +45,33 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
     const stopConversationRef = useRef<boolean>(false);
 
     const keyConfigurationButtonRef = useRef<HTMLButtonElement>(null);
-    const handlekeyConfigurationButtonClick = () => {
+    const handleKeyConfigurationButtonClick = () => {
         if (keyConfigurationButtonRef.current) {
             keyConfigurationButtonRef.current.click();
         }
     };
 
+    const handleShowKeyConfigurationAlertCancel = () => {
+        setShowKeyConfigurationAlert(false);
+      };
+    
+      const handleShowKeyConfigurationAlertContinue = () => {
+        setShowKeyConfigurationAlert(false);
+        handleKeyConfigurationButtonClick();
+      };
+
+    const handleKeyConfigurationValidation = (): boolean => {
+        if (!serverSideApiKeyIsSet && !keyConfiguration.apiKey && !keyConfiguration.azureApiKey) {
+            setShowKeyConfigurationAlert(true);
+            return false;
+        }
+        return true;
+    }
+
     const handleSend = async (message: Message, deleteCount = 0) => {
+        if (!handleKeyConfigurationValidation()) {
+            return;
+        }
         if (selectedConversation) {
             let updatedConversation: Conversation;
 
@@ -108,6 +110,7 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
                         'Content-Type': 'application/json',
                         'x-api-type': keyConfiguration.apiType ?? '',
                         'x-api-key': keyConfiguration.apiKey ?? '',
+                        'x-api-model': keyConfiguration.apiModel ?? '',
                         'x-azure-api-key': keyConfiguration.azureApiKey ?? '',
                         'x-azure-instance-name': keyConfiguration.azureInstanceName ?? '',
                         'x-azure-api-version': keyConfiguration.azureApiVersion ?? '',
@@ -120,8 +123,6 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
                         prompt: updatedConversation.prompt,
                     }),
                 });
-
-                console.log("handle chat response")
             } else {
                 response = await fetch(
                     `/api/query?message=${message.content}&indexName=${updatedConversation.index.indexName}`, {
@@ -129,6 +130,7 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
                         headers: {
                             'x-api-type': keyConfiguration.apiType ?? '',
                             'x-api-key': keyConfiguration.apiKey ?? '',
+                            'x-api-model': keyConfiguration.apiModel ?? '',
                             'x-azure-api-key': keyConfiguration.azureApiKey ?? '',
                             'x-azure-instance-name': keyConfiguration.azureInstanceName ?? '',
                             'x-azure-api-version': keyConfiguration.azureApiVersion ?? '',
@@ -136,13 +138,16 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
                             'x-azure-embedding-deployment-name': keyConfiguration.azureEmbeddingDeploymentName ?? '',
                         },
                     });
-                console.log("handle file chat response")
             }
 
             if (!response.ok) {
                 setLoading(false);
                 setMessageIsStreaming(false);
                 setMessageError(true);
+
+                const message = await response.text();
+                console.log('chat failed: ', message);
+                alert(`error message: ' ${message}`);
                 return;
             }
 
@@ -173,7 +178,7 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
             let text = '';
 
             while (!done) {
-                if (stopConversationRef.current === true) {
+                if (stopConversationRef.current) {
                     controller.abort();
                     done = true;
                     break;
@@ -237,6 +242,7 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
                 updatedConversations.push(updatedConversation);
             }
 
+            console.log(`handle chat question: ${message}, response: ${text}`);
             setConversations(updatedConversations);
 
             saveConversations(updatedConversations);
@@ -254,9 +260,9 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
         exportData();
     };
 
-    const handleKeyConfigrationChange = (keySettings: KeyConfiguration) => {
-        setkeyConfiguration(keySettings);
-        localStorage.setItem('keyConfiguation', JSON.stringify(keySettings));
+    const handleKeyConfigurationChange = (keySettings: KeyConfiguration) => {
+        setKeyConfiguration(keySettings);
+        localStorage.setItem('keyConfiguration', JSON.stringify(keySettings));
     };
 
     const handleImportConversations = (data: {
@@ -332,7 +338,6 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
                 lastConversation ? lastConversation.id + 1 : 1
             }`,
             messages: [],
-            model: OpenAIModels[OpenAIModelID.GPT_3_5],
             prompt: DEFAULT_SYSTEM_PROMPT,
             folderId: 0,
             index: {
@@ -369,7 +374,6 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
                 id: 1,
                 name: 'New conversation',
                 messages: [],
-                model: OpenAIModels[OpenAIModelID.GPT_3_5],
                 prompt: DEFAULT_SYSTEM_PROMPT,
                 folderId: 0,
                 index: {
@@ -407,7 +411,6 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
             id: 1,
             name: 'New conversation',
             messages: [],
-            model: OpenAIModels[OpenAIModelID.GPT_3_5],
             prompt: DEFAULT_SYSTEM_PROMPT,
             folderId: 0,
             index: {
@@ -467,9 +470,9 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
             setLightMode(theme as 'dark' | 'light');
         }
 
-        const keyConfiguation = localStorage.getItem('keyConfiguation');
-        if (keyConfiguation) {
-            setkeyConfiguration(JSON.parse(keyConfiguation));
+        const keyConfiguration = localStorage.getItem('keyConfiguration');
+        if (keyConfiguration) {
+            setKeyConfiguration(JSON.parse(keyConfiguration));
         }
 
         if (window.innerWidth < 640) {
@@ -504,7 +507,6 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
                 id: 1,
                 name: 'New conversation',
                 messages: [],
-                model: OpenAIModels[OpenAIModelID.GPT_3_5],
                 prompt: DEFAULT_SYSTEM_PROMPT,
                 folderId: 0,
                 index: {
@@ -515,12 +517,6 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
         }
     }, [serverSideApiKeyIsSet]);
 
-    useEffect(() => {
-        if (!serverSideApiKeyIsSet && !keyConfiguration.apiKey && !keyConfiguration.azureApiKey) {
-            handlekeyConfigurationButtonClick();
-        }
-    });
-
     return (
         <>
             <Head>
@@ -530,6 +526,9 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
                       content="height=device-height ,width=device-width, initial-scale=1, user-scalable=no"/>
                 <link rel="icon" href="/favicon.ico"/>
             </Head>
+            {showKeyConfigurationAlert && (
+                <KeySettingsAlertDialog onCancellation={handleShowKeyConfigurationAlertCancel} onContinue={handleShowKeyConfigurationAlertContinue} />
+            )}
             {selectedConversation && (
                 <main
                     className={`flex h-screen w-screen flex-col text-sm text-white dark:text-white ${lightMode}`}
@@ -563,7 +562,7 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
                                     onExportConversations={handleExportData}
                                     onImportConversations={handleImportConversations}
                                     keyConfiguration={keyConfiguration}
-                                    onKeyConfigrationChange={handleKeyConfigrationChange}
+                                    onKeyConfigurationChange={handleKeyConfigurationChange}
                                     keyConfigurationButtonRef={keyConfigurationButtonRef}
                                 />
 
@@ -583,14 +582,12 @@ const Home: React.FC<HomeProps> = ({serverSideApiKeyIsSet}) => {
                             conversation={selectedConversation}
                             messageIsStreaming={messageIsStreaming}
                             keyConfiguration={keyConfiguration}
-                            modelError={modelError}
-                            messageError={messageError}
-                            models={models}
                             loading={loading}
                             onSend={handleSend}
                             onUpdateConversation={handleUpdateConversation}
                             onEditMessage={handleEditMessage}
                             stopConversationRef={stopConversationRef}
+                            handleKeyConfigurationValidation={handleKeyConfigurationValidation}
                         />
                     </div>
                 </main>

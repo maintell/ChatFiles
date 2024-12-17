@@ -3,7 +3,6 @@ import {CHAT_FILES_MAX_SIZE} from "@/utils/app/const";
 import {humanFileSize} from "@/utils/app/files";
 import {useTranslation} from 'next-i18next';
 import {v4 as uuidv4} from 'uuid';
-import {EmbeddingCreateRequest} from "@/types/embedding";
 
 interface Props {
     onIndexChange: (index: LlamaIndex) => void;
@@ -11,19 +10,24 @@ interface Props {
     handleIsUploading: (isUploading: boolean) => void;
     handleIsUploadSuccess: (isUploadSuccess: boolean) => void;
     handleUploadError: (error: string) => void;
+    handleKeyConfigurationValidation: () => boolean;
 }
 
 export const Upload = ({
-    onIndexChange, 
+    onIndexChange,
     keyConfiguration,
-    handleIsUploading, 
-    handleIsUploadSuccess, 
-    handleUploadError
+    handleIsUploading,
+    handleIsUploadSuccess,
+    handleUploadError,
+    handleKeyConfigurationValidation,
 }: Props) => {
 
     const { t } = useTranslation('sidebar');
 
     const handleFile = async (file: File) => {
+        if (!handleKeyConfigurationValidation()) {
+            return;
+        }
         if (!validateFile(file)) {
             handleIsUploadSuccess(false);
             return;
@@ -45,14 +49,39 @@ export const Upload = ({
     };
 
     const validateFile = (file: File) => {
-        console.log(`select a file size: ${humanFileSize(file.size)}`);
+        console.log(`upload file size: ${humanFileSize(file.size)}`);
         console.log(`file max size: ${humanFileSize(CHAT_FILES_MAX_SIZE)}`);
         if (CHAT_FILES_MAX_SIZE != 0 && file.size > CHAT_FILES_MAX_SIZE) {
             handleUploadError(`Please select a file smaller than ${humanFileSize(CHAT_FILES_MAX_SIZE)}`);
             return false;
         }
+
+        console.log(`upload file type: ${file.name.split('.').pop()!}`);
+        if (!validateFileType(file.name.split('.').pop()!)) {
+            handleUploadError(`Please upload file of these types: ${supportFileType}`);
+            return false;
+        }
+
         return true;
     };
+
+    const supportFileType = "pdf, epub, docx, txt, md, csv, json, zip";
+
+    function validateFileType(fileType: string): boolean {
+        switch (fileType) {
+            case "pdf":
+            case "epub":
+            case "docx":
+            case "txt":
+            case "md":
+            case "csv":
+            case "zip":
+            case "json":
+                return true;
+            default:
+                return false;
+        }
+    }
 
     const uploadFile = async (file: File) => {
         const fileName = uuidv4();
@@ -83,6 +112,7 @@ export const Upload = ({
                 'Content-Type': 'application/json',
                 'x-api-type': keyConfiguration.apiType ?? '',
                 'x-api-key': keyConfiguration.apiKey ?? '',
+                'x-api-model': keyConfiguration.apiModel ?? '',
                 'x-azure-api-key': keyConfiguration.azureApiKey ?? '',
                 'x-azure-instance-name': keyConfiguration.azureInstanceName ?? '',
                 'x-azure-api-version': keyConfiguration.azureApiVersion ?? '',
@@ -93,12 +123,12 @@ export const Upload = ({
                 fileName: fileName,
                 fileType: fileType,
             })
-        }).then(res => {
+        }).then(async (res) => {
             if (!res.ok) {
-                console.log("save embedding failed:");
-                throw new Error("save embedding failed`");
+                const message = await res.text();
+                console.log('save embedding failed: ', message);
+                throw new Error(`save embedding failed: ' ${message}`);
             }
-
         });
     }
 
